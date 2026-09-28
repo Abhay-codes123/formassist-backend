@@ -5,11 +5,47 @@ from middleware.auth import create_token
 from models.user import SignupModel, LoginModel, OTPSendModel, OTPVerifyModel, ResetPasswordModel, VerifyPhraseModel
 from datetime import datetime, timedelta
 import random
+import os
+import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+FAST2SMS_KEY = os.getenv("FAST2SMS_KEY", "")
 
 def hash_pw(p): return pwd_context.hash(p)
 def verify_pw(plain, hashed): return pwd_context.verify(plain, hashed)
+
+def send_sms_otp(mobile: str, otp: str) -> bool:
+    """Send real OTP via Fast2SMS (free Indian SMS API)"""
+    try:
+        if not FAST2SMS_KEY:
+            print(f"[DEMO] OTP for {mobile}: {otp}")
+            return False  # no SMS key, demo mode
+        
+        url = "https://www.fast2sms.com/dev/bulkV2"
+        payload = {
+            "route": "otp",
+            "variables_values": otp,
+            "flash": 0,
+            "numbers": mobile
+        }
+        headers = {
+            "authorization": FAST2SMS_KEY,
+            "Content-Type": "application/json"
+        }
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        result = response.json()
+        if result.get("return") == True:
+            print(f"[SMS SENT] OTP sent to {mobile} via Fast2SMS")
+            return True
+        else:
+            print(f"[SMS FAIL] {result}")
+            return False
+    except Exception as e:
+        print(f"[SMS ERROR] {e}")
+        return False
 
 # SEND OTP
 async def send_otp(data: OTPSendModel):
@@ -17,15 +53,34 @@ async def send_otp(data: OTPSendModel):
     mobile = data.mobile.strip()
     if len(mobile) != 10 or not mobile.isdigit():
         raise HTTPException(status_code=400, detail="Enter valid 10-digit mobile number!")
+    
     otp = str(random.randint(100000, 999999))
     expires_at = datetime.utcnow() + timedelta(minutes=5)
+    
     await db.otps.update_one(
         {"mobile": mobile},
         {"$set": {"otp": hash_pw(otp), "expires_at": expires_at, "attempts": 0, "verified": False}},
         upsert=True
     )
-    print(f"OTP for {mobile}: {otp}")
-    return {"success": True, "message": "OTP sent!", "demo_otp": otp}
+    
+    # Try to send real SMS
+    sms_sent = send_sms_otp(mobile, otp)
+    
+    if sms_sent:
+        # Real SMS sent - don't expose OTP in response
+        return {
+            "success": True,
+            "message": f"OTP sent to {mobile[-4:].rjust(10, '*')} via SMS!",
+            "sms_sent": True
+        }
+    else:
+        # Demo mode - show OTP in response
+        return {
+            "success": True,
+            "message": "OTP generated (demo mode - SMS not configured)",
+            "demo_otp": otp,
+            "sms_sent": False
+        }
 
 # VERIFY OTP
 async def verify_otp(data: OTPVerifyModel):

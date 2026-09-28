@@ -1,13 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from dotenv import load_dotenv
 import os
+import sys
 
-from config.db import connect_db, close_db
-from routes.auth_routes import router as auth_router
+# Ensure current directory is always in sys.path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 load_dotenv()
+from config.db import connect_db, close_db
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -18,11 +19,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="FormAssist API",
     description="AI-Powered Multilingual Form Assistant Backend",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan
 )
 
-# CORS - Allow frontend to connect
+# CORS - Allow all origins (Netlify + local)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,21 +32,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routes
+# Auth Routes
+from routes.auth_routes import router as auth_router
 app.include_router(auth_router)
+
+# AI Routes
+from ai_routes import router as ai_router
+app.include_router(ai_router)
 
 @app.get("/")
 async def root():
     return {
         "success": True,
-        "message": "FormAssist Backend running!",
-        "version": "1.0.0",
+        "message": "FormAssist API v2.0 running!",
+        "ai": "Gemini powered",
         "docs": "/docs"
     }
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "FormAssist API"}
+    return {"status": "ok", "service": "FormAssist API", "version": "2.0"}
 
 if __name__ == "__main__":
     import uvicorn
